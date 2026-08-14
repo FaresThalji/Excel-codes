@@ -1,0 +1,111 @@
+function main(workbook: ExcelScript.Workbook) {
+  const sheet = workbook.getActiveWorksheet();
+  const lastRow = sheet.getUsedRange().getRowCount();
+
+  const leftIDs = sheet.getRange(`B2:B${lastRow}`).getValues();
+  const leftVals = sheet.getRange(`C2:C${lastRow}`).getValues();
+  const rightIDs = sheet.getRange(`I2:I${lastRow}`).getValues();
+  const rightVals = sheet.getRange(`H2:H${lastRow}`).getValues();
+
+  const clean = (val: unknown): number =>
+    Number(val?.toString().replace(/[$,]/g, "").trim()) || 0;
+
+  const leftIndexMap = new Map<string | number, number>();
+  for (let i = 0; i < leftIDs.length; i++) {
+    const id = leftIDs[i][0];
+    if (id && !leftIndexMap.has(id)) leftIndexMap.set(id, i);
+  }
+
+  const diffResult: (number | string)[][] =
+    Array(lastRow - 1).fill(null).map(() => [""]);
+
+  sheet.getRange(`B2:C${lastRow}`).getFormat().getFill().clear();
+
+  const summaryRows: (string | number)[][] = [];
+
+  for (let i = 0; i < rightIDs.length; i++) {
+    const rightID = rightIDs[i][0];
+    if (!rightID) continue;
+
+    const leftIndex = leftIndexMap.get(rightID);
+    if (leftIndex === undefined) continue;
+
+    const rightVal = clean(rightVals[i][0]);
+    const leftVal = clean(leftVals[leftIndex][0]);
+    const diff = Math.abs(rightVal - leftVal);
+
+    diffResult[i][0] = diff;
+    diffResult[leftIndex][0] = diff;
+
+    sheet.getRange(`B${leftIndex + 2}`).getFormat().getFill().setColor("#FF0000");
+    sheet.getRange(`C${leftIndex + 2}`).getFormat().getFill().setColor("#6CB4E4");
+
+    summaryRows.push([rightID as string, leftVal, rightVal, diff]);
+  }
+
+  sheet.getRange(`J2:J${lastRow}`).setValues(diffResult);
+
+  summaryRows.sort((a, b) => (b[3] as number) - (a[3] as number));
+
+  let report = workbook.getWorksheet("Diff Report");
+  if (report) {
+    report.getUsedRange()?.clear();
+  } else {
+    report = workbook.addWorksheet("Diff Report");
+  }
+
+  // Header
+  report.getRange("A1:D1").setValues([["Order ID", "Refund Amount", "PG CM", "Difference"]]);
+  const headerFmt = report.getRange("A1:D1").getFormat();
+  headerFmt.getFill().setColor("#2F4F8F");
+  headerFmt.getFont().setColor("#FFFFFF");
+  headerFmt.getFont().setBold(true);
+
+  if (summaryRows.length > 0) {
+    report.getRange(`A2:D${summaryRows.length + 1}`).setValues(summaryRows);
+
+    // Currency format for Refund Amount (B) and PG CM (C)
+    report.getRange(`B2:C${summaryRows.length + 1}`).setNumberFormat("$#,##0.00");
+
+    // Currency format for Difference (D) too
+    report.getRange(`D2:D${summaryRows.length + 1}`).setNumberFormat("$#,##0.00");
+
+    // Row color coding
+    for (let i = 0; i < summaryRows.length; i++) {
+      const diff = summaryRows[i][3] as number;
+      const rowRange = report.getRange(`A${i + 2}:D${i + 2}`);
+      rowRange.getFormat().getFill().setColor(diff === 0 ? "#C6EFCE" : "#FFCCCC");
+    }
+
+    // Total row
+    const totalRowIndex = summaryRows.length + 2;
+    const totalDiff = summaryRows.reduce((sum, r) => sum + (r[3] as number), 0);
+    report.getRange(`A${totalRowIndex}:D${totalRowIndex}`)
+      .setValues([["TOTAL", "", "", totalDiff]]);
+    const totalFmt = report.getRange(`A${totalRowIndex}:D${totalRowIndex}`).getFormat();
+    totalFmt.getFont().setBold(true);
+    totalFmt.getFill().setColor("#F2F2F2");
+    report.getRange(`D${totalRowIndex}`).setNumberFormat("$#,##0.00");
+
+    // Apply all borders to the entire table
+    const totalRowIndex2 = summaryRows.length + 2;
+    const tableRange = report.getRange(`A1:D${totalRowIndex2}`);
+    const borderIndices = [
+      ExcelScript.BorderIndex.edgeTop,
+      ExcelScript.BorderIndex.edgeBottom,
+      ExcelScript.BorderIndex.edgeLeft,
+      ExcelScript.BorderIndex.edgeRight,
+      ExcelScript.BorderIndex.insideHorizontal,
+      ExcelScript.BorderIndex.insideVertical
+    ];
+    for (const index of borderIndices) {
+      const border = tableRange.getFormat().getRangeBorder(index);
+      border.setStyle(ExcelScript.BorderLineStyle.continuous);
+      border.setWeight(ExcelScript.BorderWeight.thin);
+      border.setColor("#000000");
+    }
+  }
+
+  report.getRange("A:D").getFormat().autofitColumns();
+  report.activate();
+}

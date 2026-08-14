@@ -1,0 +1,126 @@
+function main(workbook: ExcelScript.Workbook) {
+
+    // ── CONFIG ──────────────────────────────────────────────────────────────────
+    const KEEP_COLS = ["Number", "Customer Order Number", "Tracking Link(s)", "Ship From Facility - Number"];
+    const TRACKING_COL = "Tracking Link(s)";
+    const TRACKING_PREFIX = "FEDEX2=Parcel=";
+    const SEPARATOR = " , ";
+    const OUTPUT_SHEET = "Tracking Clean";
+    const HEADER_COLOR = "1F497D";
+    const HEADER_TEXT = "FFFFFF";
+
+    // ── 1. SOURCE SHEET ─────────────────────────────────────────────────────────
+    const src = workbook.getActiveWorksheet();
+    const srcData = src.getUsedRange().getValues() as string[][];
+    const headers = srcData[0];
+
+    const colIdx: Record<string, number> = {};
+    for (const name of KEEP_COLS) {
+        const idx = headers.findIndex(h => h.toString().trim() === name);
+        if (idx === -1) throw new Error(`Column "${name}" not found in source sheet.`);
+        colIdx[name] = idx;
+    }
+
+    // ── 2. BUILD CLEAN DATA ──────────────────────────────────────────────────────
+    const cleanRows: string[][] = [];
+    cleanRows.push(KEEP_COLS);
+
+    for (let r = 1; r < srcData.length; r++) {
+        const row = srcData[r];
+        const cleanRow: string[] = [];
+
+        for (const name of KEEP_COLS) {
+            let val = row[colIdx[name]]?.toString().trim() ?? "";
+
+            if (name === TRACKING_COL && val !== "") {
+                // Strip scientific notation: if the raw value looks like a number, use it as-is
+                // Then split on comma, strip prefix from each part, rejoin
+                const parts = val.split(",").map(p => {
+                    let part = p.trim();
+                    // If Excel already converted to scientific notation, parse it back to a full integer string
+                    if (/^[\d.]+[eE][+\-]?\d+$/.test(part)) {
+                        part = Math.round(Number(part)).toString();
+                    }
+                    return part.replace(new RegExp(TRACKING_PREFIX, "g"), "").trim();
+                });
+                val = parts.join(SEPARATOR);
+            }
+
+            cleanRow.push(val);
+        }
+
+        cleanRows.push(cleanRow);
+    }
+
+    // ── 3. OUTPUT SHEET ──────────────────────────────────────────────────────────
+    const existing = workbook.getWorksheet(OUTPUT_SHEET);
+    if (existing) existing.delete();
+
+    const out = workbook.addWorksheet(OUTPUT_SHEET);
+
+    // ── 4. SET TRACKING COLUMN AS TEXT FORMAT BEFORE WRITING ────────────────────
+    // This prevents Excel from auto-converting long numbers to scientific notation
+    const trackingColIndex = KEEP_COLS.indexOf(TRACKING_COL); // 0-based → column C (index 2)
+    const trackingColRange = out.getRangeByIndexes(0, trackingColIndex, cleanRows.length, 1);
+    trackingColRange.setNumberFormatLocal("@"); // "@" = Text format
+
+    // Write all data at once
+    const dataRange = out.getRangeByIndexes(0, 0, cleanRows.length, KEEP_COLS.length);
+    dataRange.setValues(cleanRows);
+
+    // ── 5. FORMAT HEADER ─────────────────────────────────────────────────────────
+    const headerRange = out.getRangeByIndexes(0, 0, 1, KEEP_COLS.length);
+    headerRange.getFormat().getFill().setColor(HEADER_COLOR);
+    headerRange.getFormat().getFont().setColor(HEADER_TEXT);
+    headerRange.getFormat().getFont().setBold(true);
+    headerRange.getFormat().getFont().setSize(11);
+    headerRange.getFormat().getFont().setName("Arial");
+    headerRange.getFormat().setHorizontalAlignment(ExcelScript.HorizontalAlignment.center);
+    headerRange.getFormat().setVerticalAlignment(ExcelScript.VerticalAlignment.center);
+    headerRange.getFormat().setRowHeight(20);
+
+    // ── 6. FORMAT DATA ROWS ───────────────────────────────────────────────────────
+    if (cleanRows.length > 1) {
+        const dataRows = out.getRangeByIndexes(1, 0, cleanRows.length - 1, KEEP_COLS.length);
+        dataRows.getFormat().getFont().setName("Arial");
+        dataRows.getFormat().getFont().setSize(10);
+        dataRows.getFormat().setHorizontalAlignment(ExcelScript.HorizontalAlignment.center);
+        dataRows.getFormat().setVerticalAlignment(ExcelScript.VerticalAlignment.center);
+        dataRows.getFormat().setWrapText(true);
+        dataRows.getFormat().setRowHeight(18);
+    }
+
+    // ── 7. BORDERS (all cells) ────────────────────────────────────────────────────
+    const fullRange = out.getRangeByIndexes(0, 0, cleanRows.length, KEEP_COLS.length);
+    const borderStyle = ExcelScript.BorderLineStyle.continuous;
+    const borderWeight = ExcelScript.BorderWeight.thin;
+
+    for (const edge of [
+        ExcelScript.BorderIndex.edgeTop,
+        ExcelScript.BorderIndex.edgeBottom,
+        ExcelScript.BorderIndex.edgeLeft,
+        ExcelScript.BorderIndex.edgeRight,
+        ExcelScript.BorderIndex.insideHorizontal,
+        ExcelScript.BorderIndex.insideVertical,
+    ]) {
+        const border = fullRange.getFormat().getRangeBorder(edge);
+        border.setStyle(borderStyle);
+        border.setWeight(borderWeight);
+        border.setColor("000000");
+    }
+
+    // ── 8. COLUMN WIDTHS ──────────────────────────────────────────────────────────
+    const widths = [18, 24, 42, 26];
+    for (let c = 0; c < KEEP_COLS.length; c++) {
+        out.getRangeByIndexes(0, c, cleanRows.length, 1).getFormat().setColumnWidth(widths[c] * 7);
+    }
+
+    // ── 9. FREEZE HEADER + NAVIGATE TO A1 ────────────────────────────────────────
+    out.getFreezePanes().freezeRows(1);
+
+    // Activate sheet and land on cell A1
+    out.activate();
+    out.getRange("A1").select();
+
+    console.log(`Done. Output sheet: "${OUTPUT_SHEET}" — ${cleanRows.length - 1} data rows.`);
+}

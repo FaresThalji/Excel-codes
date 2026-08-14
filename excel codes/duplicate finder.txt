@@ -1,0 +1,34 @@
+function main(workbook: ExcelScript.Workbook) {
+    // Get the active worksheet
+    let sheet = workbook.getActiveWorksheet();
+
+    // Get the used range in columns A:D
+    let lastRow = sheet.getUsedRange().getRowCount();
+    let dtIDs = sheet.getRange(`A2:A${lastRow}`).getValues();
+    let dtValues = sheet.getRange(`B2:B${lastRow}`).getValues();
+    let pgIDs = sheet.getRange(`C2:C${lastRow}`).getValues();
+    let pgValues = sheet.getRange(`D2:D${lastRow}`).getValues();
+
+    // Prepare an array for the differences
+    let differences: (string | number)[][] = [];
+
+    // Loop through PG IDs
+    for (let i = 0; i < pgIDs.length; i++) {
+        let pgID = pgIDs[i][0];
+        let pgValue = parseFloat(pgValues[i][0].toString().replace("$", "")) || 0;
+
+        // Find matching DT ID
+        let dtIndex = dtIDs.findIndex(row => row[0] === pgID);
+
+        if (dtIndex !== -1) {
+            let dtValue = parseFloat(dtValues[dtIndex][0].toString().replace("$", "")) || 0;
+            let diff = Math.abs(pgValue - dtValue);
+            differences.push([diff]);
+        } else {
+            differences.push(["ID not found"]);
+        }
+    }
+
+    // Write the differences to column E
+    sheet.getRange(`E2:E${differences.length + 1}`).setValues(differences);
+}
